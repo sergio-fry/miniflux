@@ -15,6 +15,12 @@ import (
 	"miniflux.app/timezone"
 )
 
+type OrderPart struct {
+	order      string
+	direction  string
+}
+
+
 // EntryQueryBuilder builds a SQL query to fetch entries.
 type EntryQueryBuilder struct {
 	store      *Storage
@@ -22,6 +28,7 @@ type EntryQueryBuilder struct {
 	conditions []string
 	order      string
 	direction  string
+  orders     []OrderPart
 	limit      int
 	offset     int
 }
@@ -32,8 +39,12 @@ func (e *EntryQueryBuilder) WithSearchQuery(query string) *EntryQueryBuilder {
 		nArgs := len(e.args) + 1
 		e.conditions = append(e.conditions, fmt.Sprintf("e.document_vectors @@ plainto_tsquery($%d)", nArgs))
 		e.args = append(e.args, query)
-		e.WithOrder(fmt.Sprintf("ts_rank(document_vectors, plainto_tsquery($%d))", nArgs))
-		e.WithDirection("DESC")
+
+    var orders []OrderPart
+    orders = append(orders, OrderPart{fmt.Sprintf("ts_rank(document_vectors, plainto_tsquery($%d))", nArgs), "DESC"})
+    orders = append(orders, OrderPart{"published_at", "DESC"})
+
+    e.WithOrders(orders)
 	}
 	return e
 }
@@ -141,14 +152,24 @@ func (e *EntryQueryBuilder) WithShareCodeNotEmpty() *EntryQueryBuilder {
 	return e
 }
 
+// WithOrders set multiple sorting orders.
+func (e *EntryQueryBuilder) WithOrders(orders []OrderPart) *EntryQueryBuilder {
+	e.order = ""
+	e.direction = ""
+	e.orders = orders
+	return e
+}
+
 // WithOrder set the sorting order.
 func (e *EntryQueryBuilder) WithOrder(order string) *EntryQueryBuilder {
+	e.orders = []OrderPart{}
 	e.order = order
 	return e
 }
 
 // WithDirection set the sorting direction.
 func (e *EntryQueryBuilder) WithDirection(direction string) *EntryQueryBuilder {
+	e.orders = []OrderPart{}
 	e.direction = direction
 	return e
 }
@@ -346,6 +367,17 @@ func (e *EntryQueryBuilder) buildCondition() string {
 func (e *EntryQueryBuilder) buildSorting() string {
 	var parts []string
 
+	if len(e.orders) != 0 {
+    parts = append(parts, "ORDER BY")
+    for i, order := range e.orders {
+      if i == 0 {
+        parts = append(parts, fmt.Sprintf(` %s %s`, order.order, order.direction))
+      } else {
+        parts = append(parts, fmt.Sprintf(`, %s %s`, order.order, order.direction))
+      }
+    }
+	}
+
 	if e.order != "" {
 		parts = append(parts, fmt.Sprintf(`ORDER BY %s`, e.order))
 	}
@@ -371,6 +403,7 @@ func NewEntryQueryBuilder(store *Storage, userID int64) *EntryQueryBuilder {
 		store:      store,
 		args:       []interface{}{userID},
 		conditions: []string{"e.user_id = $1"},
+		orders:     []OrderPart{},
 	}
 }
 
